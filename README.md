@@ -1,4 +1,7 @@
-# TinyStory
+# TinyLM
+
+This is an educational repo for getting hands-on with implementing, training, and evaluating
+language models.
 
 A 50.9M-parameter GPT trained from scratch — tokenizer to sampling — in ~1,000 lines of
 readable PyTorch. No `transformers`, no Lightning, no config framework. Two corpora are
