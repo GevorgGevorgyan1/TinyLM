@@ -1,0 +1,6 @@
+torch
+torchvision
+numpy
+tiktoken
+datasets>=3.2
+tensorboard

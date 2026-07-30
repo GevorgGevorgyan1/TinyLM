@@ -1,0 +1,12 @@
+out/fineweb-edu/ckpt.pt: iter 20,000 | val loss 3.3579 | 50.93M params | block_size 1024
+  10,042/10,042 | acc 0.2727 | acc_norm 0.2725 | loss 3.4004
+
+HellaSwag: 10,042 examples
+  activitynet   3,243  acc 0.3235  acc_norm 0.3290  loss 3.6615  all 3.8216  margin +0.2134
+  wikihow       6,799  acc 0.2484  acc_norm 0.2455  loss 3.2759  all 3.2669  margin -0.0120
+  OVERALL      10,042  acc 0.2727  acc_norm 0.2725  loss 3.4004  all 3.4460  margin +0.0608
+
+  loss   = per-token NLL of the correct ending (compare to val loss)
+  all    = same, averaged over all four candidates
+  margin = mean wrong-ending loss minus correct-ending loss; >0 favours the truth
+  random baseline is 0.2500 acc_norm; GPT-2 124M scores ~0.2950

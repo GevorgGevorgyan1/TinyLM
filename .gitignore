@@ -1,0 +1,27 @@
+# Virtualenv
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Tokenized corpora — rebuild with `python prepare.py <dataset>`.
+# train.bin alone is ~950MB, well past GitHub's 100MB per-file limit.
+data/
+
+# Checkpoints (~600MB each, also past the 100MB limit). Release them as
+# GitHub Release assets or on the Hub rather than committing them.
+out/**/ckpt.pt
+
+# TensorBoard event files ARE tracked — they are the only complete record of
+# the published runs and total under 1MB. Nothing to exclude here.
+
+# Terminal scrollback captures: one lost its first 9,870 iterations, the other
+# is a scrambled capture. plot.py regenerates every published number from
+# out/*/tb/, so these are not the source of truth for anything.
+*.log
+# The HellaSwag log is different — complete, 720 bytes, and the verbatim output
+# of a committed script, so it stays as the evidence behind the README table.
+!eval-hellaswag.log
