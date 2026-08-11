@@ -29,30 +29,30 @@ from model import GPT, GPTConfig
 # --- data / io -------------------------------------------------------------
 DATASET = 'smol-smoltalk'        # must match a `python prepare_sft.py <name>` run
 INIT_FROM = os.path.join('out', 'fineweb-edu', 'ckpt.pt')
-EVAL_INTERVAL = 100
-EVAL_ITERS = 50
-LOG_INTERVAL = 10
+EVAL_INTERVAL = 250
+EVAL_ITERS = 100
+LOG_INTERVAL = 100
 ALWAYS_SAVE = False
 
 # --- logging ---------------------------------------------------------------
 TENSORBOARD = True
-RUN_NAME = ''
+RUN_NAME = 'second_run'
 
 # --- optimisation ----------------------------------------------------------
-EPOCHS = 2.0
-BATCH_SIZE = 16                  # sequences per micro-step
-GRAD_ACCUM_STEPS = 4             # 65,536 tokens/iter — a quarter of pretraining, because
+EPOCHS = 3.0
+BATCH_SIZE = 64                  # sequences per micro-step
+GRAD_ACCUM_STEPS = 2             # 65,536 tokens/iter — a quarter of pretraining, because
                                  # SFT wants many more steps over far fewer tokens
 LEARNING_RATE = 1e-4             # ~1/6 of the pretrain peak. Higher than the usual SFT
                                  # rule of thumb on purpose: two embedding rows start from
                                  # noise and the shift from web text to dialogue is large.
                                  # Drop to 5e-5 if val loss turns up early.
 MIN_LR = 1e-5
-WARMUP_ITERS = 100
+WARMUP_ITERS = 300
 WEIGHT_DECAY = 0.1
 BETAS = (0.9, 0.95)
 GRAD_CLIP = 1.0
-DROPOUT = 0.1                    # a real multi-epoch pass over a small corpus, unlike pretraining
+# DROPOUT = 0.1                    # a real multi-epoch pass over a small corpus, unlike pretraining
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--dataset', default=DATASET, help='name under data/')
@@ -71,7 +71,7 @@ DTYPE = ('bfloat16' if DEVICE == 'cuda' and torch.cuda.is_bf16_supported()
 print(f'using device={DEVICE} dtype={DTYPE} ')
 
 COMPILE = True
-FLOPS_PROMISED = 71e12           # RTX 3090 bf16 dense, fp32 accumulate (GA102).
+FLOPS_PROMISED = 362.05e12           # RTX 3090 bf16 dense, fp32 accumulate (GA102).
 
 device_type = 'cuda' if DEVICE.startswith('cuda') else 'cpu'
 torch.manual_seed(1337)
@@ -90,7 +90,7 @@ ckpt = torch.load(INIT_FROM, map_location=DEVICE, weights_only=False)
 
 # The architecture is whatever was pretrained; only dropout changes.
 cfg = GPTConfig(**ckpt['config'])
-cfg.dropout = DROPOUT
+# cfg.dropout = DROPOUT
 assert cfg.vocab_size > IM_END, (
     f'vocab_size {cfg.vocab_size} has no room for the chat delimiters at '
     f'{IM_START}/{IM_END}')
