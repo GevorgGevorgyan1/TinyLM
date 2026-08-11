@@ -1,8 +1,13 @@
-"""Sample from a trained TinyStories GPT checkpoint.
+"""Sample from a trained GPT checkpoint.
 
     python sample.py --prompt "Once upon a time"
     python sample.py --prompt "Lily found a key" --num_samples 5 --temperature 0.7
     python sample.py                                  # unconditional, from <|endoftext|>
+
+An SFT checkpoint from sft.py is detected from its metadata: the prompt is then
+wrapped in the chat template and generation stops at <|im_end|>.
+
+    python sample.py --ckpt out/smol-smoltalk-sft/ckpt.pt --prompt "Why is the sky blue?"
 """
 
 import argparse
@@ -12,6 +17,7 @@ from contextlib import nullcontext
 import tiktoken
 import torch
 
+import chat
 from model import GPT, GPTConfig
 
 
@@ -22,7 +28,10 @@ def parse_args():
                    help='out/<dataset>/ckpt.pt')
     p.add_argument('--prompt', default='',
                    help='priming text, or @path/to/file.txt to read from disk. '
-                        'Empty means start a fresh document from the EOT token.')
+                        'Empty means start a fresh document from the EOT token. '
+                        'On a chat checkpoint this is the user turn.')
+    p.add_argument('--system', default=None,
+                   help='system turn, chat checkpoints only')
     p.add_argument('--num_samples', type=int, default=3)
     p.add_argument('--max_new_tokens', type=int, default=300)
     p.add_argument('--temperature', type=float, default=0.8,
@@ -85,15 +94,29 @@ def main():
     # From the checkpoint, not hardcoded: a model trained on a different
     # encoding must not be decoded with this one.
     meta = ckpt['meta']
-    enc = tiktoken.get_encoding(meta['encoding'])
-    eot = meta['eot_token']
+    chat_mode = meta.get('chat', False)
+    if chat_mode:
+        # GPT-2 BPE plus the two turn delimiters, and generation ends a turn
+        # rather than a document.
+        enc, eot = chat.enc, chat.IM_END
+    else:
+        enc = tiktoken.get_encoding(meta['encoding'])
+        eot = meta['eot_token']
 
     prompt = args.prompt
     if prompt.startswith('@'):
         with open(prompt[1:]) as f:
             prompt = f.read()
 
-    if prompt:
+    if chat_mode:
+        if not prompt:
+            raise SystemExit('a chat checkpoint needs --prompt: there is no '
+                             'unconditional mode once every turn has a speaker')
+        # Ends on the assistant header, so the first token sampled is the first
+        # token of the reply.
+        start_ids = chat.render_prompt(prompt, system=args.system)
+        start_ids = start_ids[-model.cfg.block_size:]
+    elif prompt:
         start_ids = enc.encode(prompt, allowed_special={'<|endoftext|>'})
         # The tail is what the model conditions on, so keep room to generate.
         start_ids = start_ids[-model.cfg.block_size:]
@@ -124,7 +147,13 @@ def main():
         completion = [t for t in completion if t < enc.n_vocab]
         print(f'--- sample {i + 1}/{args.num_samples} '
               f'({len(completion)} tokens) ---')
-        print(prompt + enc.decode(completion))
+        if chat_mode:
+            if args.system:
+                print(f'system:    {args.system}')
+            print(f'user:      {prompt}')
+            print(f'assistant: {enc.decode(completion)}')
+        else:
+            print(prompt + enc.decode(completion))
         print()
 
 

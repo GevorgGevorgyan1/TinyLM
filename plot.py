@@ -25,7 +25,14 @@ from model import GPT, GPTConfig
 OUT_ROOT = 'out'
 ASSETS = 'assets'
 
-FLOPS_PROMISED = 71e12   # RTX 3090 bf16 dense, fp32 accumulate (GA102)
+# Peak bf16 throughput of whatever card the run actually used. The event files
+# record the hyperparameters but not the GPU, so it has to live here.
+FLOPS_PROMISED = {
+    'tinystories': 71e12,        # RTX 3090 bf16 dense, fp32 accumulate (GA102)
+    'fineweb-edu': 71e12,
+    'smol-smoltalk-sft': 362.05e12,   # L40S bf16 dense, no sparsity (AD102)
+}
+DEFAULT_FLOPS = 71e12
 
 # Slots 1 and 2 of the categorical palette. Validated as a pair against this
 # surface: lightness band, chroma, CVD separation (worst adjacent dE 24.7
@@ -34,7 +41,8 @@ THEME = dict(
     surface='#ffffff', ink='#0b0b0b', secondary='#52514e', muted='#898781',
     grid='#e1e0d9', axis='#c3c2b7', train='#2a78d6', val='#eb6834')
 
-TITLE = {'fineweb-edu': 'FineWeb-Edu', 'tinystories': 'TinyStories'}
+TITLE = {'fineweb-edu': 'FineWeb-Edu', 'tinystories': 'TinyStories',
+         'smol-smoltalk-sft': 'smol-smoltalk SFT'}
 
 
 def event_files(dataset):
@@ -75,7 +83,7 @@ def load_config(dataset):
     return conf
 
 
-def mfu(series, conf):
+def mfu(dataset, series, conf):
     """
     Recompute utilisation from measured ms/iter rather than trusting perf/mfu.
     """
@@ -87,7 +95,8 @@ def mfu(series, conf):
     flops_per_token = (6 * n + 12 * cfg.n_layer * cfg.n_head
                        * (cfg.n_embd // cfg.n_head) * cfg.block_size)
     tokens_per_iter = int(conf['tokens_per_iter'])
-    return [(step, flops_per_token * tokens_per_iter / (ms / 1000) / FLOPS_PROMISED)
+    peak = FLOPS_PROMISED.get(dataset, DEFAULT_FLOPS)
+    return [(step, flops_per_token * tokens_per_iter / (ms / 1000) / peak)
             for step, ms in series.get('perf/ms_per_iter', [])]
 
 
@@ -103,8 +112,19 @@ def median(points, skip_steps=()):
     return values[len(values) // 2] if values else 0.0
 
 
-def ema(values, alpha=0.05):
-    """Smoothing for the per-iteration traces, which are far too noisy to read raw."""
+def ema(values, frac=0.03):
+    """Smoothing for the per-iteration traces, which are far too noisy to read raw.
+
+    The window is a fraction of the trace rather than a fixed alpha, because the
+    runs log at different intervals: pretraining contributes ~2,000 points and
+    the SFT run 63. An alpha tuned for the former is still chasing its first
+    value a third of the way through the latter — and for grad_norm that first
+    value is the initialisation spike, so the smoothed line reads as a long
+    decay from 3.5 when the trace underneath is flat at 0.75. Never coarser than
+    the old default, so the pretraining figures are unchanged.
+    """
+    span = max(2, int(len(values) * frac))
+    alpha = max(0.05, 2.0 / (span + 1))
     out, acc = [], None
     for v in values:
         acc = v if acc is None else alpha * v + (1 - alpha) * acc
@@ -129,7 +149,7 @@ def style(ax, t, xlabel, ylabel, title=None):
                      loc='left', pad=10)
 
 
-LOG_TICKS = (1, 1.2, 1.5, 2, 3, 4, 5, 7, 10, 15, 20)
+LOG_TICKS = (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 7, 10, 15, 20)
 
 
 def log_yaxis(ax, values):
@@ -160,9 +180,14 @@ def figure(name, build, size):
     print(f'  wrote {path}')
 
 
-def loss_figure(runs):
+def loss_figure(runs, name='loss-curves'):
     """One panel per run: the corpora differ in difficulty, so they never share a
-    y-axis — small multiples rather than two scales on one chart."""
+    y-axis — small multiples rather than two scales on one chart.
+
+    Fine-tuning gets its own figure rather than a third panel here. It starts
+    from a trained checkpoint on a different corpus, so its curve is not
+    comparable to a from-scratch run and putting them side by side would invite
+    exactly that comparison."""
     def build(fig, t):
         axes = fig.subplots(1, len(runs))
         axes = [axes] if len(runs) == 1 else list(axes)
@@ -190,7 +215,7 @@ def loss_figure(runs):
             for text in leg.get_texts():
                 text.set_color(t['secondary'])
         fig.tight_layout(w_pad=3.5)
-    figure('loss-curves', build, (6.2 * len(runs), 4.2))
+    figure(name, build, (6.2 * len(runs), 4.2))
 
 
 def dynamics_figure(dataset, series):
@@ -263,7 +288,8 @@ def main():
         if 'loss/val' not in series:
             print(f'{dataset}: no loss/val scalars, skipping')
             continue
-        series['mfu'] = mfu(series, load_config(dataset))
+        conf = load_config(dataset)
+        series['mfu'] = mfu(dataset, series, conf)
         stored, fixed = series.get('perf/mfu', []), series['mfu']
         evals = {s for s, _ in series['loss/val']}
         if stored and fixed and abs(median(stored, evals) - median(fixed, evals)) > 0.02:
@@ -272,10 +298,14 @@ def main():
         print(f'{dataset}: {len(series)} tags, {len(series["loss/val"])} evals')
         write_csv(dataset, series)
         dynamics_figure(dataset, series)
-        runs.append((dataset, series))
+        # Only sft.py records what it initialised from, which is exactly the
+        # thing that makes a run non-comparable to the from-scratch curves.
+        runs.append((dataset, series, 'init_from' in conf))
 
-    if runs:
-        loss_figure(runs)
+    for name, group in (('loss-curves', [(d, s) for d, s, is_sft in runs if not is_sft]),
+                        ('loss-sft', [(d, s) for d, s, is_sft in runs if is_sft])):
+        if group:
+            loss_figure(group, name)
 
 
 if __name__ == '__main__':
