@@ -170,6 +170,33 @@ python sample.py --ckpt out/tinystories/ckpt.pt \
                  --prompt "Once upon a time" --num_samples 3 --temperature 0.8
 ```
 
+**Supervised fine-tuning** on [smol-smoltalk](https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk)
+— the SmolTalk variant built for models under 1B, with the advanced math and function-calling
+subsets removed:
+
+```bash
+python prepare_sft.py --max-examples 50000     # a slice first; drop the flag for all 460k
+python sft.py                                  # starts from out/fineweb-edu/ckpt.pt
+python sample.py --ckpt out/smol-smoltalk-sft/ckpt.pt --prompt "Why is the sky blue?"
+```
+
+Three things make this different from pretraining:
+
+*Chat tokens cost nothing.* `vocab_size` is GPT-2's 50257 padded to 50304, so ids 50257
+and 50258 are rows the embedding matrix already has and has never used. They become
+`<|im_start|>` and `<|im_end|>` with no resize and no checkpoint surgery. Tied to `lm_head`,
+those rows spent pretraining being pushed down by the softmax denominator, so `sft.py`
+resets them to the init distribution before training.
+
+*Loss is masked to assistant turns.* [prepare_sft.py](prepare_sft.py) writes a `uint8` mask
+beside every token shard, and [sft.py](sft.py) turns unmasked positions into `-100` for
+`ignore_index`. The model is graded on what it should say, not on reciting the question back.
+
+*Batches start at conversation boundaries.* A third shard file holds the `uint64` offset of
+every conversation, so a window never opens midway through an assistant turn with the prompt
+that produced it out of view. Conversations too long for `block_size` are cut back to the last
+complete turn rather than dropped — at 1024 tokens that keeps 97.5% of them instead of 57%.
+
 **Evaluate on HellaSwag:**
 
 ```bash
@@ -193,6 +220,9 @@ python plot.py
 | [model.py](model.py) | GPT definition, MFU estimator, optimizer grouping |
 | [prepare.py](prepare.py) | corpus → resumable `uint16` token shards + manifest |
 | [train.py](train.py) | training loop, cosine schedule, TensorBoard, checkpointing |
+| [chat.py](chat.py) | ChatML rendering on GPT-2 BPE, conversation → tokens + loss mask |
+| [prepare_sft.py](prepare_sft.py) | chat corpus → token / mask / conversation-index shards |
+| [sft.py](sft.py) | masked-loss fine-tuning from a pretrained checkpoint |
 | [sample.py](sample.py) | autoregressive generation with temperature / top-k |
 | [hellaswag.py](hellaswag.py) | zero-shot HellaSwag by length-normalized likelihood |
 | [plot.py](plot.py) | TensorBoard events → `assets/` figures and CSVs |

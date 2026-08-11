@@ -156,7 +156,9 @@ class GPT(nn.Module):
         """
         Args:
             idx:     Token ids — (batch, seq_len), values in [0, vocab_size)
-            targets: Same shape, each position's next token; None when generating
+            targets: Same shape, each position's next token; None when generating.
+                     -100 marks a position to skip, which is how SFT trains on
+                     assistant turns only.
         Returns:
             (logits, loss). loss is None when targets is None.
         """
@@ -176,7 +178,11 @@ class GPT(nn.Module):
             return self.lm_head(x[:, [-1], :]), None
 
         logits = self.lm_head(x)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1))
+        # ignore_index drops masked positions from both the numerator and the
+        # denominator, so the loss stays a per-supervised-token mean. Pretraining
+        # passes no -100s, so this is a no-op there.
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1),
+                               ignore_index=-100)
         return logits, loss
 
     @torch.no_grad()
